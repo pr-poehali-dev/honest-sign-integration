@@ -1,5 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
+
+const API = "https://functions.poehali.dev/483ba43a-f264-408b-bd8b-ff3f38efaa15";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function api(action: string, method = "GET", body?: object): Promise<any> {
+  const res = await fetch(`${API}?action=${action}`, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+}
+
+type Order = { id: string; product: string; gtin: string; count: number; status: string; received: number; order_id_cz?: string; date: string };
+type Code = { code: string; gtin: string; product: string; serial: string; status: string; created: string };
+type Product = { name: string; total: number; used: number; pct: number };
+type AnalyticsData = { total_orders: number; total_ordered: number; total_received: number; active_codes: number; used_codes: number; products: Product[] };
+type SettingsData = { oms_id: string; client_token: string; api_key: string; env: string; inn: string; org_name: string; webhook_url: string; webhook_token: string; configured: boolean };
 
 type Page = "dashboard" | "orders" | "catalog" | "analytics" | "settings";
 
@@ -11,23 +29,6 @@ const NAV_ITEMS = [
   { id: "settings", label: "Настройки", icon: "Settings" },
 ] as const;
 
-const ORDERS = [
-  { id: "ORD-2026-001", product: "Молоко 3.2% 1л", gtin: "04607097010230", count: 500, status: "completed", date: "05.06.2026", received: 500 },
-  { id: "ORD-2026-002", product: "Сыр Гауда 400г", gtin: "04607097010247", count: 1000, status: "processing", date: "06.06.2026", received: 0 },
-  { id: "ORD-2026-003", product: "Кефир 2.5% 900мл", gtin: "04607097010254", count: 300, status: "pending", date: "07.06.2026", received: 0 },
-  { id: "ORD-2026-004", product: "Масло сливочное 82.5%", gtin: "04607097010261", count: 750, status: "completed", date: "04.06.2026", received: 750 },
-  { id: "ORD-2026-005", product: "Йогурт питьевой 430мл", gtin: "04607097010278", count: 200, status: "error", date: "03.06.2026", received: 0 },
-];
-
-const CODES = [
-  { code: "010460709701023021LD9KQ3CE7JE", gtin: "04607097010230", product: "Молоко 3.2% 1л", status: "active", created: "05.06.2026", serial: "LD9KQ3CE7JE" },
-  { code: "010460709701023021MK8PR4DF8IH", gtin: "04607097010230", product: "Молоко 3.2% 1л", status: "active", created: "05.06.2026", serial: "MK8PR4DF8IH" },
-  { code: "010460709701024721NL0QS5EG9JI", gtin: "04607097010247", product: "Сыр Гауда 400г", status: "used", created: "01.06.2026", serial: "NL0QS5EG9JI" },
-  { code: "010460709701025421OM1RT6FH0KJ", gtin: "04607097010254", product: "Кефир 2.5% 900мл", status: "active", created: "05.06.2026", serial: "OM1RT6FH0KJ" },
-  { code: "010460709701026121PN2SU7GI1LK", gtin: "04607097010261", product: "Масло сливочное 82.5%", status: "active", created: "04.06.2026", serial: "PN2SU7GI1LK" },
-  { code: "010460709701027821QO3TV8HJ2ML", gtin: "04607097010278", product: "Йогурт питьевой 430мл", status: "used", created: "03.06.2026", serial: "QO3TV8HJ2ML" },
-];
-
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     completed: { label: "Выполнен", cls: "badge-active" },
@@ -38,20 +39,28 @@ function StatusBadge({ status }: { status: string }) {
     used: { label: "Использован", cls: "badge-used" },
   };
   const s = map[status] ?? { label: status, cls: "badge-used" };
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.cls}`}>
-      {s.label}
-    </span>
-  );
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.cls}`}>{s.label}</span>;
 }
 
+function Spinner() {
+  return <div className="w-4 h-4 border-2 border-border border-t-foreground rounded-full animate-spin" />;
+}
+
+// ── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard() {
-  const stats = [
-    { label: "Всего заказов", value: "1 248", delta: "+12 за неделю", icon: "ClipboardList", color: "text-blue-500" },
-    { label: "Кодов получено", value: "84 320", delta: "+2 750 за неделю", icon: "QrCode", color: "text-green-500" },
-    { label: "Кодов использовано", value: "71 540", delta: "84.8% утилизация", icon: "CheckCircle2", color: "text-emerald-500" },
-    { label: "Ожидают обработки", value: "3", delta: "2 заказа в очереди", icon: "Clock", color: "text-amber-500" },
-  ];
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [configured, setConfigured] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([api("analytics"), api("orders"), api("settings")]).then(([an, or, st]) => {
+      setData(an);
+      setOrders((or.orders || []).slice(0, 4));
+      setConfigured(st.configured || false);
+      setLoading(false);
+    });
+  }, []);
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -60,13 +69,28 @@ function Dashboard() {
         <p className="text-sm text-muted-foreground mt-1">Статистика по кодам маркировки Честного знака</p>
       </div>
 
+      {!configured && !loading && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+          <Icon name="AlertTriangle" size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-800">Настройте подключение к Честному знаку</p>
+            <p className="text-xs text-amber-700 mt-0.5">Перейдите в раздел «Настройки» и укажите OMS ID, Client Token и API ключ.</p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {stats.map((s) => (
+        {[
+          { label: "Всего заказов", value: loading ? "—" : (data?.total_orders ?? 0).toString(), delta: "заказов в системе", icon: "ClipboardList", color: "text-blue-500" },
+          { label: "Кодов заказано", value: loading ? "—" : (data?.total_ordered ?? 0).toLocaleString("ru"), delta: "суммарно по всем заказам", icon: "QrCode", color: "text-green-500" },
+          { label: "Кодов получено", value: loading ? "—" : (data?.total_received ?? 0).toLocaleString("ru"), delta: "из Честного знака", icon: "CheckCircle2", color: "text-emerald-500" },
+          { label: "Активных кодов", value: loading ? "—" : (data?.active_codes ?? 0).toLocaleString("ru"), delta: "готовы к нанесению", icon: "Clock", color: "text-amber-500" },
+        ].map((s) => (
           <div key={s.label} className="stat-card">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">{s.label}</p>
-                <p className="text-2xl font-semibold mt-1 text-foreground">{s.value}</p>
+                <p className="text-2xl font-semibold mt-1 text-foreground">{loading ? <Spinner /> : s.value}</p>
                 <p className="text-xs text-muted-foreground mt-1">{s.delta}</p>
               </div>
               <Icon name={s.icon} size={20} className={s.color} />
@@ -78,55 +102,109 @@ function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-white border border-border rounded-lg p-5">
           <h2 className="text-sm font-semibold text-foreground mb-4">Последние заказы</h2>
-          <div className="space-y-0">
-            {ORDERS.slice(0, 4).map((o) => (
-              <div key={o.id} className="data-table-row flex items-center justify-between py-3 text-sm">
-                <div>
-                  <p className="font-medium text-foreground">{o.id}</p>
-                  <p className="text-xs text-muted-foreground">{o.product}</p>
+          {loading ? (
+            <div className="flex justify-center py-8"><Spinner /></div>
+          ) : orders.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Заказов пока нет</p>
+          ) : (
+            <div>
+              {orders.map((o) => (
+                <div key={o.id} className="data-table-row flex items-center justify-between py-3 text-sm">
+                  <div>
+                    <p className="font-medium text-foreground">{o.id}</p>
+                    <p className="text-xs text-muted-foreground">{o.product}</p>
+                  </div>
+                  <div className="text-right">
+                    <StatusBadge status={o.status} />
+                    <p className="text-xs text-muted-foreground mt-1">{o.count} кодов · {o.date}</p>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <StatusBadge status={o.status} />
-                  <p className="text-xs text-muted-foreground mt-1">{o.count} кодов · {o.date}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white border border-border rounded-lg p-5">
-          <h2 className="text-sm font-semibold text-foreground mb-4">Активность по дням</h2>
-          <div className="flex items-end gap-1.5 h-32">
-            {[42, 28, 65, 80, 55, 90, 73, 48, 62, 85, 70, 95, 60, 45].map((h, i) => (
-              <div key={i} className="flex-1 flex flex-col justify-end">
-                <div
-                  className="rounded-sm bg-blue-500 opacity-80 hover:opacity-100 transition-opacity cursor-pointer"
-                  style={{ height: `${h}%` }}
-                />
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-            <span>25 мая</span>
-            <span>7 июня 2026</span>
-          </div>
+          <h2 className="text-sm font-semibold text-foreground mb-4">Утилизация по товарам</h2>
+          {loading ? (
+            <div className="flex justify-center py-8"><Spinner /></div>
+          ) : (data?.products || []).length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Данных пока нет</p>
+          ) : (
+            <div className="space-y-3">
+              {(data?.products || []).slice(0, 5).map((p) => (
+                <div key={p.name}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-foreground truncate max-w-[200px]">{p.name}</span>
+                    <span className="text-muted-foreground ml-2">{p.pct}%</span>
+                  </div>
+                  <div className="bg-muted rounded-full h-1.5">
+                    <div className="h-1.5 rounded-full bg-green-500" style={{ width: `${p.pct}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       <div className="bg-white border border-border rounded-lg p-5">
-        <h2 className="text-sm font-semibold text-foreground mb-3">Статус подключения к Честному знаку</h2>
+        <h2 className="text-sm font-semibold text-foreground mb-3">Статус подключения</h2>
         <div className="flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span className="text-sm text-foreground">API подключён · GTIN активен · Последняя синхронизация: 07.06.2026 14:32</span>
+          <div className={`w-2 h-2 rounded-full ${configured ? "bg-green-500 animate-pulse" : "bg-amber-400"}`} />
+          <span className="text-sm text-foreground">
+            {configured ? "API Честного знака настроен и подключён" : "Требуется настройка API"}
+          </span>
         </div>
       </div>
     </div>
   );
 }
 
+// ── ORDERS ───────────────────────────────────────────────────────────────────
 function Orders() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ gtin: "", product: "", count: "", comment: "" });
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [syncing, setSyncing] = useState<string | null>(null);
+
+  const loadOrders = useCallback(() => {
+    setLoading(true);
+    api("orders").then((d) => { setOrders(d.orders || []); setLoading(false); });
+  }, []);
+
+  useEffect(() => { loadOrders(); }, [loadOrders]);
+
+  const createOrder = async () => {
+    if (!form.gtin || !form.product || !form.count) {
+      setMsg({ text: "Заполните GTIN, наименование и количество", ok: false });
+      return;
+    }
+    setSubmitting(true);
+    const res = await api("create_order", "POST", { ...form, count: parseInt(form.count) });
+    setSubmitting(false);
+    if (res.ok) {
+      setMsg({ text: `Заказ ${res.order.id} создан`, ok: true });
+      setShowNew(false);
+      setForm({ gtin: "", product: "", count: "", comment: "" });
+      loadOrders();
+    } else {
+      setMsg({ text: res.message || "Ошибка создания заказа", ok: false });
+    }
+    setTimeout(() => setMsg(null), 4000);
+  };
+
+  const syncOrder = async (orderId: string) => {
+    setSyncing(orderId);
+    const res = await api("sync_order", "POST", { order_id: orderId });
+    setSyncing(null);
+    if (res.ok) loadOrders();
+    else setMsg({ text: res.message || "Ошибка синхронизации", ok: false });
+    setTimeout(() => setMsg(null), 3000);
+  };
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -135,69 +213,47 @@ function Orders() {
           <h1 className="text-2xl font-semibold text-foreground">Заказы кодов маркировки</h1>
           <p className="text-sm text-muted-foreground mt-1">Создание и управление заказами через Честный знак</p>
         </div>
-        <button
-          onClick={() => setShowNew(true)}
-          className="flex items-center gap-2 bg-foreground text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 transition-opacity"
-        >
-          <Icon name="Plus" size={16} />
-          Новый заказ
+        <button onClick={() => setShowNew(true)} className="flex items-center gap-2 bg-foreground text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 transition-opacity">
+          <Icon name="Plus" size={16} />Новый заказ
         </button>
       </div>
+
+      {msg && (
+        <div className={`rounded-lg px-4 py-3 text-sm flex items-center gap-2 ${msg.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
+          <Icon name={msg.ok ? "CheckCircle2" : "AlertCircle"} size={15} />
+          {msg.text}
+        </div>
+      )}
 
       {showNew && (
         <div className="bg-white border border-border rounded-lg p-5 animate-fade-in">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-foreground">Новый заказ кодов маркировки</h2>
-            <button onClick={() => setShowNew(false)} className="text-muted-foreground hover:text-foreground">
-              <Icon name="X" size={16} />
-            </button>
+            <button onClick={() => setShowNew(false)} className="text-muted-foreground hover:text-foreground"><Icon name="X" size={16} /></button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">GTIN товара</label>
-              <input
-                className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                placeholder="04607097010230"
-                value={form.gtin}
-                onChange={e => setForm(f => ({ ...f, gtin: e.target.value }))}
-              />
+              <label className="text-xs font-medium text-muted-foreground block mb-1">GTIN товара *</label>
+              <input className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring" placeholder="04607097010230" value={form.gtin} onChange={e => setForm(f => ({ ...f, gtin: e.target.value }))} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Наименование товара</label>
-              <input
-                className="w-full border border-border rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                placeholder="Молоко 3.2% 1л"
-                value={form.product}
-                onChange={e => setForm(f => ({ ...f, product: e.target.value }))}
-              />
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Наименование товара *</label>
+              <input className="w-full border border-border rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring" placeholder="Молоко 3.2% 1л" value={form.product} onChange={e => setForm(f => ({ ...f, product: e.target.value }))} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Количество кодов</label>
-              <input
-                type="number"
-                className="w-full border border-border rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                placeholder="500"
-                value={form.count}
-                onChange={e => setForm(f => ({ ...f, count: e.target.value }))}
-              />
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Количество кодов *</label>
+              <input type="number" className="w-full border border-border rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring" placeholder="500" value={form.count} onChange={e => setForm(f => ({ ...f, count: e.target.value }))} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Комментарий</label>
-              <input
-                className="w-full border border-border rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                placeholder="Необязательно"
-                value={form.comment}
-                onChange={e => setForm(f => ({ ...f, comment: e.target.value }))}
-              />
+              <input className="w-full border border-border rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring" placeholder="Необязательно" value={form.comment} onChange={e => setForm(f => ({ ...f, comment: e.target.value }))} />
             </div>
           </div>
           <div className="flex gap-3 mt-4">
-            <button className="bg-foreground text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 transition-opacity">
-              Отправить заказ в ЧЗ
+            <button onClick={createOrder} disabled={submitting} className="flex items-center gap-2 bg-foreground text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
+              {submitting && <Spinner />} Отправить заказ в ЧЗ
             </button>
-            <button onClick={() => setShowNew(false)} className="px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-muted transition-colors">
-              Отмена
-            </button>
+            <button onClick={() => setShowNew(false)} className="px-4 py-2 rounded-md text-sm font-medium border border-border hover:bg-muted transition-colors">Отмена</button>
           </div>
         </div>
       )}
@@ -205,80 +261,87 @@ function Orders() {
       <div className="bg-white border border-border rounded-lg overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <h2 className="text-sm font-semibold text-foreground">История заказов</h2>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Icon name="Search" size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input className="border border-border rounded-md pl-8 pr-3 py-1.5 text-xs bg-background focus:outline-none focus:ring-1 focus:ring-ring w-48" placeholder="Поиск по ID или GTIN..." />
-            </div>
-            <button className="flex items-center gap-1.5 border border-border rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted transition-colors">
-              <Icon name="Download" size={13} />
-              Экспорт
-            </button>
-          </div>
+          <button onClick={loadOrders} className="flex items-center gap-1.5 border border-border rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted transition-colors">
+            <Icon name="RefreshCw" size={13} />Обновить
+          </button>
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-muted/40 text-left">
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">ID заказа</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Товар</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">GTIN</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground text-right">Кол-во</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground text-right">Получено</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Дата</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Статус</th>
-              <th className="px-5 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {ORDERS.map((o) => (
-              <tr key={o.id} className="data-table-row">
-                <td className="px-5 py-3.5 font-mono text-xs text-foreground">{o.id}</td>
-                <td className="px-5 py-3.5 text-foreground">{o.product}</td>
-                <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{o.gtin}</td>
-                <td className="px-5 py-3.5 text-right">{o.count.toLocaleString("ru")}</td>
-                <td className="px-5 py-3.5 text-right">{o.received.toLocaleString("ru")}</td>
-                <td className="px-5 py-3.5 text-muted-foreground">{o.date}</td>
-                <td className="px-5 py-3.5"><StatusBadge status={o.status} /></td>
-                <td className="px-5 py-3.5">
-                  <button className="text-muted-foreground hover:text-foreground transition-colors">
-                    <Icon name="MoreHorizontal" size={16} />
-                  </button>
-                </td>
+        {loading ? (
+          <div className="flex justify-center py-12"><Spinner /></div>
+        ) : orders.length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-muted-foreground">Заказов пока нет. Создайте первый заказ кодов маркировки.</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/40 text-left">
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">ID заказа</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Товар</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">GTIN</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground text-right">Кол-во</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground text-right">Получено</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Дата</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Статус</th>
+                <th className="px-5 py-3"></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {orders.map((o) => (
+                <tr key={o.id} className="data-table-row">
+                  <td className="px-5 py-3.5 font-mono text-xs text-foreground">{o.id}</td>
+                  <td className="px-5 py-3.5 text-foreground">{o.product}</td>
+                  <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{o.gtin}</td>
+                  <td className="px-5 py-3.5 text-right">{o.count.toLocaleString("ru")}</td>
+                  <td className="px-5 py-3.5 text-right">{o.received.toLocaleString("ru")}</td>
+                  <td className="px-5 py-3.5 text-muted-foreground">{o.date}</td>
+                  <td className="px-5 py-3.5"><StatusBadge status={o.status} /></td>
+                  <td className="px-5 py-3.5">
+                    {o.order_id_cz && (
+                      <button onClick={() => syncOrder(o.id)} disabled={syncing === o.id} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
+                        {syncing === o.id ? <Spinner /> : <Icon name="RefreshCw" size={13} />}
+                        Синхр.
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
 }
 
+// ── CATALOG ──────────────────────────────────────────────────────────────────
 function Catalog() {
+  const [codes, setCodes] = useState<Code[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
 
-  const filtered = CODES.filter(c => {
-    const matchSearch = c.code.includes(search) || c.product.toLowerCase().includes(search.toLowerCase()) || c.gtin.includes(search);
-    const matchStatus = filterStatus === "all" || c.status === filterStatus;
-    return matchSearch && matchStatus;
-  });
+  const load = useCallback(() => {
+    setLoading(true);
+    const params = new URLSearchParams({ action: "codes", status: filterStatus });
+    if (search) params.set("search", search);
+    fetch(`${API}?${params}`).then(r => r.json()).then(d => {
+      setCodes(d.codes || []);
+      setTotal(d.total || 0);
+      setLoading(false);
+    });
+  }, [search, filterStatus]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const copyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+  };
 
   return (
     <div className="animate-fade-in space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Каталог кодов маркировки</h1>
-          <p className="text-sm text-muted-foreground mt-1">84 320 кодов в базе данных</p>
-        </div>
-        <div className="flex gap-2">
-          <button className="flex items-center gap-1.5 border border-border rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors">
-            <Icon name="Upload" size={15} />
-            Импорт
-          </button>
-          <button className="flex items-center gap-1.5 border border-border rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors">
-            <Icon name="Download" size={15} />
-            Экспорт CSV
-          </button>
+          <p className="text-sm text-muted-foreground mt-1">{total.toLocaleString("ru")} кодов в базе данных</p>
         </div>
       </div>
 
@@ -286,194 +349,187 @@ function Catalog() {
         <div className="px-5 py-4 border-b border-border flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-48">
             <Icon name="Search" size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input
-              className="w-full border border-border rounded-md pl-8 pr-3 py-1.5 text-xs bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-              placeholder="Поиск по коду, GTIN, товару..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
+            <input className="w-full border border-border rounded-md pl-8 pr-3 py-1.5 text-xs bg-background focus:outline-none focus:ring-1 focus:ring-ring" placeholder="Поиск по коду, GTIN, товару..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <div className="flex gap-1">
             {[["all", "Все"], ["active", "Активные"], ["used", "Использованные"]].map(([val, lbl]) => (
-              <button
-                key={val}
-                onClick={() => setFilterStatus(val)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${filterStatus === val ? "bg-foreground text-primary-foreground" : "border border-border text-muted-foreground hover:bg-muted"}`}
-              >
-                {lbl}
-              </button>
+              <button key={val} onClick={() => setFilterStatus(val)} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${filterStatus === val ? "bg-foreground text-primary-foreground" : "border border-border text-muted-foreground hover:bg-muted"}`}>{lbl}</button>
             ))}
           </div>
         </div>
 
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-muted/40 text-left">
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Код маркировки</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Товар</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">GTIN</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Серийный №</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Создан</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Статус</th>
-              <th className="px-5 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((c) => (
-              <tr key={c.code} className="data-table-row">
-                <td className="px-5 py-3.5 font-mono text-xs text-foreground max-w-xs">
-                  <span className="truncate block" title={c.code}>{c.code.slice(0, 28)}…</span>
-                </td>
-                <td className="px-5 py-3.5 text-foreground">{c.product}</td>
-                <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{c.gtin}</td>
-                <td className="px-5 py-3.5 font-mono text-xs text-foreground">{c.serial}</td>
-                <td className="px-5 py-3.5 text-muted-foreground">{c.created}</td>
-                <td className="px-5 py-3.5"><StatusBadge status={c.status} /></td>
-                <td className="px-5 py-3.5">
-                  <button className="text-muted-foreground hover:text-foreground transition-colors" title="Скопировать код">
-                    <Icon name="Copy" size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {filtered.length === 0 && (
+        {loading ? (
+          <div className="flex justify-center py-12"><Spinner /></div>
+        ) : codes.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-muted-foreground">
-            Коды не найдены по заданным критериям
+            {total === 0 ? "Коды появятся после получения заказа из Честного знака" : "Коды не найдены по заданным критериям"}
           </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/40 text-left">
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Код маркировки</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Товар</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">GTIN</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Серийный №</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Создан</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Статус</th>
+                <th className="px-5 py-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {codes.map((c) => (
+                <tr key={c.code} className="data-table-row">
+                  <td className="px-5 py-3.5 font-mono text-xs text-foreground max-w-xs">
+                    <span className="truncate block" title={c.code}>{c.code.slice(0, 28)}…</span>
+                  </td>
+                  <td className="px-5 py-3.5 text-foreground">{c.product}</td>
+                  <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{c.gtin}</td>
+                  <td className="px-5 py-3.5 font-mono text-xs text-foreground">{c.serial}</td>
+                  <td className="px-5 py-3.5 text-muted-foreground">{c.created}</td>
+                  <td className="px-5 py-3.5"><StatusBadge status={c.status} /></td>
+                  <td className="px-5 py-3.5">
+                    <button onClick={() => copyCode(c.code)} className="text-muted-foreground hover:text-foreground transition-colors" title="Скопировать код">
+                      <Icon name="Copy" size={14} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
 
         <div className="px-5 py-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
-          <span>Показано {filtered.length} из 84 320 кодов</span>
-          <div className="flex gap-1">
-            <button className="px-2 py-1 border border-border rounded hover:bg-muted transition-colors"><Icon name="ChevronLeft" size={13} /></button>
-            <button className="px-2 py-1 border border-border rounded hover:bg-muted transition-colors"><Icon name="ChevronRight" size={13} /></button>
-          </div>
+          <span>Показано {codes.length} из {total.toLocaleString("ru")} кодов</span>
         </div>
       </div>
     </div>
   );
 }
 
+// ── ANALYTICS ────────────────────────────────────────────────────────────────
 function Analytics() {
-  const products = [
-    { name: "Молоко 3.2% 1л", total: 24000, used: 21500, pct: 89.6 },
-    { name: "Масло сливочное 82.5%", total: 18500, used: 15200, pct: 82.2 },
-    { name: "Сыр Гауда 400г", total: 14000, used: 10800, pct: 77.1 },
-    { name: "Кефир 2.5% 900мл", total: 10500, used: 7400, pct: 70.5 },
-    { name: "Йогурт питьевой 430мл", total: 8200, used: 4300, pct: 52.4 },
-    { name: "Творог 9% 200г", total: 6120, used: 5800, pct: 94.8 },
-  ];
+  const [data, setData] = useState<AnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const months = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн"];
-  const ordered = [12000, 18500, 15000, 22000, 19500, 24000];
-  const usedArr = [9000, 15200, 12800, 18500, 16200, 21500];
-  const maxV = Math.max(...ordered);
+  useEffect(() => {
+    api("analytics").then((d: AnalyticsData) => { setData(d); setLoading(false); });
+  }, []);
 
   return (
     <div className="animate-fade-in space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Аналитика</h1>
-          <p className="text-sm text-muted-foreground mt-1">Статистика и экспорт данных по маркировке</p>
-        </div>
-        <div className="flex gap-2">
-          <button className="flex items-center gap-1.5 border border-border rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors">
-            <Icon name="Download" size={15} />
-            Скачать отчёт
-          </button>
-          <button className="flex items-center gap-1.5 bg-foreground text-primary-foreground rounded-md px-3 py-2 text-sm font-medium hover:opacity-90 transition-opacity">
-            <Icon name="FileSpreadsheet" size={15} />
-            Экспорт Excel
-          </button>
+          <p className="text-sm text-muted-foreground mt-1">Статистика и данные по маркировке</p>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: "Заказано за период", value: "111 000", sub: "с января 2026" },
-          { label: "Использовано", value: "71 540", sub: "64.5% от заказанных" },
-          { label: "Среднее за месяц", value: "18 500", sub: "кодов маркировки" },
+          { label: "Всего заказов", value: data?.total_orders ?? 0, sub: "в системе" },
+          { label: "Кодов заказано", value: (data?.total_ordered ?? 0).toLocaleString("ru"), sub: "суммарно" },
+          { label: "Кодов получено", value: (data?.total_received ?? 0).toLocaleString("ru"), sub: "из Честного знака" },
         ].map(s => (
           <div key={s.label} className="stat-card">
             <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">{s.label}</p>
-            <p className="text-2xl font-semibold mt-1 text-foreground">{s.value}</p>
+            {loading ? <div className="mt-2"><Spinner /></div> : <p className="text-2xl font-semibold mt-1 text-foreground">{s.value}</p>}
             <p className="text-xs text-muted-foreground mt-1">{s.sub}</p>
           </div>
         ))}
-      </div>
-
-      <div className="bg-white border border-border rounded-lg p-5">
-        <h2 className="text-sm font-semibold text-foreground mb-1">Динамика заказов и использования</h2>
-        <p className="text-xs text-muted-foreground mb-5">Январь — Июнь 2026</p>
-        <div className="flex items-end gap-4 h-40">
-          {months.map((m, i) => (
-            <div key={m} className="flex-1 flex flex-col items-center gap-1">
-              <div className="flex items-end gap-0.5 w-full justify-center" style={{ height: "128px" }}>
-                <div className="w-5/12 bg-blue-500 rounded-t-sm opacity-80" style={{ height: `${(ordered[i] / maxV) * 100}%` }} />
-                <div className="w-5/12 bg-green-500 rounded-t-sm opacity-70" style={{ height: `${(usedArr[i] / maxV) * 100}%` }} />
-              </div>
-              <span className="text-xs text-muted-foreground">{m}</span>
-            </div>
-          ))}
-        </div>
-        <div className="flex gap-4 mt-4">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <div className="w-3 h-3 rounded-sm bg-blue-500 opacity-80" /> Заказано
-          </div>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <div className="w-3 h-3 rounded-sm bg-green-500 opacity-70" /> Использовано
-          </div>
-        </div>
       </div>
 
       <div className="bg-white border border-border rounded-lg overflow-hidden">
         <div className="px-5 py-4 border-b border-border">
           <h2 className="text-sm font-semibold text-foreground">Утилизация по товарам</h2>
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-muted/40 text-left">
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Товар</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground text-right">Заказано</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground text-right">Использовано</th>
-              <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Утилизация</th>
-            </tr>
-          </thead>
-          <tbody>
-            {products.map(p => (
-              <tr key={p.name} className="data-table-row">
-                <td className="px-5 py-3.5 text-foreground">{p.name}</td>
-                <td className="px-5 py-3.5 text-right text-muted-foreground">{p.total.toLocaleString("ru")}</td>
-                <td className="px-5 py-3.5 text-right text-foreground">{p.used.toLocaleString("ru")}</td>
-                <td className="px-5 py-3.5">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-muted rounded-full h-1.5">
-                      <div className="h-1.5 rounded-full bg-green-500" style={{ width: `${p.pct}%` }} />
-                    </div>
-                    <span className="text-xs font-medium text-foreground w-10 text-right">{p.pct}%</span>
-                  </div>
-                </td>
+        {loading ? (
+          <div className="flex justify-center py-12"><Spinner /></div>
+        ) : (data?.products || []).length === 0 ? (
+          <div className="px-5 py-12 text-center text-sm text-muted-foreground">Данные появятся после создания заказов</div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/40 text-left">
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Товар</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground text-right">Заказано</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground text-right">Получено</th>
+                <th className="px-5 py-3 text-xs font-medium text-muted-foreground">Выполнение</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(data?.products || []).map((p) => (
+                <tr key={p.name} className="data-table-row">
+                  <td className="px-5 py-3.5 text-foreground">{p.name}</td>
+                  <td className="px-5 py-3.5 text-right text-muted-foreground">{p.total.toLocaleString("ru")}</td>
+                  <td className="px-5 py-3.5 text-right text-foreground">{p.used.toLocaleString("ru")}</td>
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-muted rounded-full h-1.5">
+                        <div className="h-1.5 rounded-full bg-green-500" style={{ width: `${p.pct}%` }} />
+                      </div>
+                      <span className="text-xs font-medium text-foreground w-10 text-right">{p.pct}%</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
 }
 
+// ── SETTINGS ─────────────────────────────────────────────────────────────────
 function Settings() {
-  const [omsId, setOmsId] = useState("1234567890abcdef");
-  const [env, setEnv] = useState("production");
-  const [saved, setSaved] = useState(false);
+  const [form, setForm] = useState({
+    oms_id: "", client_token: "", api_key: "",
+    env: "sandbox", inn: "", org_name: "",
+    webhook_url: "", webhook_token: "",
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [checkResult, setCheckResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [showToken, setShowToken] = useState(false);
+  const [showKey, setShowKey] = useState(false);
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+  useEffect(() => {
+    api("settings").then((d: SettingsData) => {
+      setForm(f => ({
+        ...f,
+        oms_id: d.oms_id || "",
+        client_token: d.client_token || "",
+        api_key: d.api_key || "",
+        env: d.env || "sandbox",
+        inn: d.inn || "",
+        org_name: d.org_name || "",
+        webhook_url: d.webhook_url || "",
+        webhook_token: d.webhook_token || "",
+      }));
+      setLoading(false);
+    });
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    const res = await api("settings", "POST", form);
+    setSaving(false);
+    setMsg({ text: res.message || (res.ok ? "Сохранено" : "Ошибка"), ok: !!res.ok });
+    setTimeout(() => setMsg(null), 3000);
   };
+
+  const check = async () => {
+    setChecking(true);
+    setCheckResult(null);
+    const res = await api("check", "POST", {});
+    setChecking(false);
+    setCheckResult({ ok: res.ok, message: res.message });
+  };
+
+  if (loading) return <div className="flex justify-center py-20"><Spinner /></div>;
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -482,19 +538,24 @@ function Settings() {
         <p className="text-sm text-muted-foreground mt-1">Конфигурация подключения к Честному знаку (ГИС МТ)</p>
       </div>
 
+      {msg && (
+        <div className={`rounded-lg px-4 py-3 text-sm flex items-center gap-2 ${msg.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
+          <Icon name={msg.ok ? "CheckCircle2" : "AlertCircle"} size={15} />
+          {msg.text}
+        </div>
+      )}
+
       <div className="bg-white border border-border rounded-lg p-5 space-y-5">
+        {/* API ЧЗ */}
         <div>
           <h2 className="text-sm font-semibold text-foreground mb-4">API Честного знака</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Среда</label>
               <div className="flex gap-2">
-                {[["production", "Боевая"], ["sandbox", "Тестовая"]].map(([val, lbl]) => (
-                  <button
-                    key={val}
-                    onClick={() => setEnv(val)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${env === val ? "border-foreground bg-foreground text-primary-foreground" : "border-border text-muted-foreground hover:bg-muted"}`}
-                  >
+                {[["sandbox", "Тестовая"], ["production", "Боевая"]].map(([val, lbl]) => (
+                  <button key={val} onClick={() => setForm(f => ({ ...f, env: val }))}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${form.env === val ? "border-foreground bg-foreground text-primary-foreground" : "border-border text-muted-foreground hover:bg-muted"}`}>
                     {lbl}
                   </button>
                 ))}
@@ -502,88 +563,94 @@ function Settings() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">OMS ID</label>
-              <input
-                className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                value={omsId}
-                onChange={e => setOmsId(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">API ключ</label>
-              <div className="relative">
-                <input
-                  type="password"
-                  className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                  defaultValue="sk_live_••••••••••••••••••••••••••••••••"
-                />
-                <button className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                  <Icon name="Eye" size={14} />
-                </button>
-              </div>
+              <input className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                value={form.oms_id} onChange={e => setForm(f => ({ ...f, oms_id: e.target.value }))} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Client Token</label>
               <div className="relative">
-                <input
-                  type="password"
-                  className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                  defaultValue="ct_••••••••••••••••••••••••••••••••"
-                />
-                <button className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                  <Icon name="Eye" size={14} />
+                <input type={showToken ? "text" : "password"}
+                  className="w-full border border-border rounded-md px-3 py-2 pr-9 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                  placeholder="eyJhbGciOiJSUzI1NiJ9..."
+                  value={form.client_token} onChange={e => setForm(f => ({ ...f, client_token: e.target.value }))} />
+                <button onClick={() => setShowToken(s => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <Icon name={showToken ? "EyeOff" : "Eye"} size={14} />
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">API ключ</label>
+              <div className="relative">
+                <input type={showKey ? "text" : "password"}
+                  className="w-full border border-border rounded-md px-3 py-2 pr-9 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  value={form.api_key} onChange={e => setForm(f => ({ ...f, api_key: e.target.value }))} />
+                <button onClick={() => setShowKey(s => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                  <Icon name={showKey ? "EyeOff" : "Eye"} size={14} />
                 </button>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="border-t border-border pt-5">
-          <h2 className="text-sm font-semibold text-foreground mb-4">API для внешних систем учёта</h2>
-          <div className="bg-muted/40 rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-foreground">Webhook URL</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Отправка уведомлений при получении кодов</p>
-              </div>
-            </div>
-            <input className="w-full border border-border rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-ring" placeholder="https://erp.company.ru/webhook/marking" />
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1.5">Токен авторизации для исходящих запросов</p>
-              <input className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-white focus:outline-none focus:ring-1 focus:ring-ring" placeholder="Bearer token для ERP/WMS" />
-            </div>
-          </div>
-        </div>
-
+        {/* Организация */}
         <div className="border-t border-border pt-5">
           <h2 className="text-sm font-semibold text-foreground mb-4">Организация</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">ИНН</label>
-              <input className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring" placeholder="7707123456" />
+              <input className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder="7707123456" value={form.inn} onChange={e => setForm(f => ({ ...f, inn: e.target.value }))} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Наименование</label>
-              <input className="w-full border border-border rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring" placeholder='ООО "МолПродукт"' />
+              <input className="w-full border border-border rounded-md px-3 py-2 text-sm bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder='ООО "МолПродукт"' value={form.org_name} onChange={e => setForm(f => ({ ...f, org_name: e.target.value }))} />
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            onClick={handleSave}
-            className="bg-foreground text-primary-foreground px-5 py-2 rounded-md text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            {saved ? "Сохранено ✓" : "Сохранить настройки"}
+        {/* Webhook */}
+        <div className="border-t border-border pt-5">
+          <h2 className="text-sm font-semibold text-foreground mb-4">API для внешних систем учёта</h2>
+          <div className="bg-muted/40 rounded-lg p-4 space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Webhook URL</label>
+              <input className="w-full border border-border rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder="https://erp.company.ru/webhook/marking"
+                value={form.webhook_url} onChange={e => setForm(f => ({ ...f, webhook_url: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Bearer токен для ERP/WMS</label>
+              <input className="w-full border border-border rounded-md px-3 py-2 text-sm font-mono bg-white focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder="Bearer token..."
+                value={form.webhook_token} onChange={e => setForm(f => ({ ...f, webhook_token: e.target.value }))} />
+            </div>
+          </div>
+        </div>
+
+        {/* Кнопки */}
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          <button onClick={save} disabled={saving} className="flex items-center gap-2 bg-foreground text-primary-foreground px-5 py-2 rounded-md text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
+            {saving && <Spinner />} Сохранить настройки
           </button>
-          <button className="border border-border px-4 py-2 rounded-md text-sm text-muted-foreground hover:bg-muted transition-colors">
-            Проверить подключение
+          <button onClick={check} disabled={checking} className="flex items-center gap-2 border border-border px-4 py-2 rounded-md text-sm text-muted-foreground hover:bg-muted transition-colors disabled:opacity-50">
+            {checking && <Spinner />} Проверить подключение
           </button>
+          {checkResult && (
+            <span className={`flex items-center gap-1.5 text-sm ${checkResult.ok ? "text-green-600" : "text-red-600"}`}>
+              <Icon name={checkResult.ok ? "CheckCircle2" : "XCircle"} size={15} />
+              {checkResult.message}
+            </span>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
+// ── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
 
@@ -612,15 +679,12 @@ export default function App() {
 
         <nav className="flex-1 px-3 py-4 space-y-0.5">
           {NAV_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setPage(item.id as Page)}
+            <button key={item.id} onClick={() => setPage(item.id as Page)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors text-left ${
                 page === item.id
                   ? "bg-[hsl(var(--sidebar-accent))] text-[hsl(var(--sidebar-accent-foreground))]"
                   : "text-[hsl(var(--sidebar-foreground))] hover:bg-[hsl(var(--sidebar-accent))] hover:text-[hsl(var(--sidebar-accent-foreground))]"
-              }`}
-            >
+              }`}>
               <Icon name={item.icon} size={16} />
               <span className="font-medium">{item.label}</span>
             </button>
@@ -629,11 +693,7 @@ export default function App() {
 
         <div className="px-3 py-4 border-t border-[hsl(var(--sidebar-border))]">
           <div className="px-3 py-2.5">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-              <span className="text-xs text-[hsl(var(--sidebar-foreground))]">API подключён</span>
-            </div>
-            <p className="text-[10px] text-[hsl(var(--sidebar-foreground))] opacity-60">Боевая среда · ГИС МТ</p>
+            <p className="text-[10px] text-[hsl(var(--sidebar-foreground))] opacity-60">ГИС МТ · Молочная продукция</p>
           </div>
         </div>
       </aside>

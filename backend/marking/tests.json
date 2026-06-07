@@ -1,0 +1,36 @@
+{
+  "tests": [
+    {
+      "name": "GET settings",
+      "method": "GET",
+      "path": "/?action=settings",
+      "expectedStatus": 200,
+      "expectedBody": {"configured": false},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET orders",
+      "method": "GET",
+      "path": "/?action=orders",
+      "expectedStatus": 200,
+      "expectedBody": {"orders": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET codes",
+      "method": "GET",
+      "path": "/?action=codes",
+      "expectedStatus": 200,
+      "expectedBody": {"total": 0},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET analytics",
+      "method": "GET",
+      "path": "/?action=analytics",
+      "expectedStatus": 200,
+      "expectedBody": {"total_orders": 0},
+      "bodyMatcher": "partial"
+    }
+  ]
+}
